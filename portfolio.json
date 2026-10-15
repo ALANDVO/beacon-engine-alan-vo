@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "beacon-engine-alan-vo",
+  "owner": "ALANDVO",
+  "email": "alanvo@gmail.com",
+  "domain": "AI/ML developer tools",
+  "summary": "Work in progress: beacon-engine-alan-vo",
+  "workflows": [
+    "Upload Windows ISO and extract version/edition/build metadata with automatic deduplication",
+    "Create and version build recipes defining components to keep/remove, registry modifications, and unattend.xml snippets",
+    "Orchestrate multi-stage builds (mount, inventory, component cleanup, registry tweaks, unmount, ISO creation) with real-time progress and logs"
+  ],
+  "auth": "oidc-keycloak-saml-broker",
+  "llm_providers": [
+    "openai-compatible",
+    "anthropic",
+    "gemini",
+    "ollama"
+  ],
+  "status": "work-in-progress"
+}
