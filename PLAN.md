@@ -24,16 +24,16 @@ Tests: `backend/tests/test_health.py`, `backend/tests/test_users.py`, `backend/t
 
 ### iso-analysis — ISO image analysis and metadata extraction
 
-Status: in_progress
+Status: done
 
 Acceptance:
 - Upload Windows ISO, extract version/edition/build info
 - Store ISO metadata in database
 - API endpoint returns parsed ISO details
 
-Implementation: `backend/app/api/isos.py`, `backend/app/models/__init__.py (ISOImage model)`, `backend/app/schemas/__init__.py (ISOImage schemas)`, `frontend/src/pages/ISOsPage.tsx`, `frontend/src/api/client.ts (isosApi)`
+Implementation: `backend/app/api/isos.py`, `backend/app/models/__init__.py (ISOImage model)`, `backend/app/schemas/__init__.py (ISOImage schemas)`, `backend/app/core/iso_parser.py`, `frontend/src/pages/ISOsPage.tsx`, `frontend/src/api/client.ts (isosApi)`
 
-Tests: `backend/tests/test_isos.py`
+Tests: `backend/tests/test_isos.py`, `backend/tests/test_iso_parser.py`
 
 ### recipe-builder — Build recipe creation and validation
 

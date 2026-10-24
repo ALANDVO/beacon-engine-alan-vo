@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0 — work-in-progress checkpoint
+
+Partial code published for continued development. Known issues: STATUS.md.
+
 ## 1.0.0 — work-in-progress checkpoint
 
 Partial code published for continued development. Known issues: STATUS.md.
@@ -12,6 +16,7 @@ All notable changes to this project will be documented in this format.
 - FastAPI backend with SQLite + SQLAlchemy persistence
 - React + TypeScript + Vite frontend with dark theme
 - ISO upload with SHA256 deduplication and metadata storage
+- ISO metadata extraction (version, edition, build number, architecture, language) from Windows ISOs using WIM parsing
 - Build recipe CRUD with JSON schema validation (components, removals, registry tweaks, unattend snippets)
 - Recipe cloning and versioning
 - Build job orchestration with stage tracking (pending → mounting → inventory → component_cleanup → registry_tweaks → unmounting → iso_creation → completed/failed)
