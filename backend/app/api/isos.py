@@ -9,6 +9,7 @@ import aiofiles
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.db_utils import execute, scalar, scalars, commit, refresh, add, delete
+from app.core.iso_parser import extract_iso_metadata, ISOParserError, ISOMetadata
 from app.models import ISOImage
 from app.schemas import (
     ISOImageResponse,
@@ -55,6 +56,14 @@ async def upload_iso(
     file_size = os.path.getsize(file_path)
     sha256 = await compute_sha256_async(file_path)
 
+    # Extract metadata from ISO
+    metadata = ISOMetadata()
+    try:
+        metadata = await extract_iso_metadata(file_path)
+    except ISOParserError:
+        # Metadata extraction failed, continue with empty metadata
+        pass
+
     existing = await execute(
         db,
         select(ISOImage).where(ISOImage.sha256 == sha256, ISOImage.owner_id == user.id),
@@ -69,6 +78,11 @@ async def upload_iso(
         sha256=sha256,
         size_bytes=file_size,
         storage_path=file_path,
+        version=metadata.version,
+        edition=metadata.edition,
+        build_number=metadata.build_number,
+        architecture=metadata.architecture,
+        language=metadata.language,
     )
     await add(db, iso)
     await commit(db)
