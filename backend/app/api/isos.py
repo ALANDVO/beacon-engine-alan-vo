@@ -1,3 +1,6 @@
+
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -18,6 +21,8 @@ from app.schemas import (
     ErrorResponse,
 )
 from app.api.users import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -60,9 +65,9 @@ async def upload_iso(
     metadata = ISOMetadata()
     try:
         metadata = await extract_iso_metadata(file_path)
-    except ISOParserError:
+    except ISOParserError as e:
         # Metadata extraction failed, continue with empty metadata
-        pass
+        logger.warning("Failed to extract ISO metadata for %s: %s", file.filename, e)
 
     existing = await execute(
         db,
@@ -70,6 +75,7 @@ async def upload_iso(
     )
     if existing_iso := (await scalar(db, select(ISOImage).where(ISOImage.sha256 == sha256, ISOImage.owner_id == user.id))):
         os.remove(file_path)
+        logger.info("Duplicate ISO detected, returning existing: %s (id=%s)", existing_iso.filename, existing_iso.id)
         return ISOImageResponse.model_validate(existing_iso)
 
     iso = ISOImage(
@@ -87,6 +93,7 @@ async def upload_iso(
     await add(db, iso)
     await commit(db)
     await refresh(db, iso)
+    logger.info("Uploaded ISO: %s (id=%s, sha256=%s)", iso.filename, iso.id, iso.sha256[:16])
     return ISOImageResponse.model_validate(iso)
 
 
@@ -99,17 +106,15 @@ async def list_isos(
 ) -> PaginatedResponse:
     query = select(ISOImage).where(ISOImage.owner_id == user.id).order_by(ISOImage.created_at.desc())
     total = await scalar(db, select(func.count()).select_from(query.subquery()))
-    total = total or 0
-
-    offset = (page - 1) * page_size
-    items = await scalars(db, query.offset(offset).limit(page_size))
-
+    total_pages = (total + page_size - 1) // page_size
+    items = await scalars(db, query.offset((page - 1) * page_size).limit(page_size))
+    logger.info("Listed %d ISOs for user %s", len(items), user.id)
     return PaginatedResponse(
-        items=[ISOImageResponse.model_validate(i) for i in items],
+        items=[ISOImageResponse.model_validate(item) for item in items],
         total=total,
         page=page,
         page_size=page_size,
-        total_pages=(total + page_size - 1) // page_size,
+        total_pages=total_pages,
     )
 
 
@@ -125,6 +130,7 @@ async def get_iso(
     )
     if not iso:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ISO not found")
+    logger.info("Retrieved ISO %s (id=%s)", iso.filename, iso.id)
     return ISOImageResponse.model_validate(iso)
 
 
@@ -141,8 +147,11 @@ async def delete_iso(
     if not iso:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ISO not found")
 
+    # Delete file if it exists
     if os.path.exists(iso.storage_path):
         os.remove(iso.storage_path)
 
     await delete(db, iso)
     await commit(db)
+    logger.info("Deleted ISO %s (id=%s)", iso.filename, iso_id)
+

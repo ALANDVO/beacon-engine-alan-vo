@@ -1,6 +1,7 @@
 """ISO image parsing utilities for Windows ISO metadata extraction."""
 
 import asyncio
+import logging
 import os
 import re
 import subprocess
@@ -9,6 +10,9 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +42,7 @@ async def extract_iso_metadata(iso_path: str) -> ISOMetadata:
     # Try to find and extract WIM files from the ISO
     wim_path = await _find_wim_in_iso(iso_path)
     if not wim_path:
+        logger.warning("No WIM file found in ISO: %s", iso_path)
         raise ISOParserError("No WIM file found in ISO")
 
     # Parse WIM metadata
@@ -48,6 +53,9 @@ async def extract_iso_metadata(iso_path: str) -> ISOMetadata:
     metadata.architecture = wim_metadata.architecture
     metadata.language = wim_metadata.language
 
+    logger.info("Extracted ISO metadata: version=%s edition=%s build=%s arch=%s lang=%s",
+                metadata.version, metadata.edition, metadata.build_number,
+                metadata.architecture, metadata.language)
     return metadata
 
 
@@ -60,8 +68,9 @@ async def _find_wim_in_iso(iso_path: str) -> Optional[str]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await result.communicate()
+        stdout, stderr = await result.communicate()
         if result.returncode != 0:
+            logger.debug("7z list failed for %s: %s", iso_path, stderr.decode("utf-8", errors="ignore"))
             return None
 
         output = stdout.decode("utf-8", errors="ignore")
@@ -77,6 +86,7 @@ async def _find_wim_in_iso(iso_path: str) -> Optional[str]:
                     wim_files.append(wim_path)
 
         if not wim_files:
+            logger.debug("No WIM files found in ISO: %s", iso_path)
             return None
 
         # Prefer install.wim over boot.wim as it has more complete metadata
@@ -91,9 +101,10 @@ async def _find_wim_in_iso(iso_path: str) -> Optional[str]:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await result.communicate()
+            _, stderr = await result.communicate()
 
             if result.returncode != 0:
+                logger.debug("7z extract failed for %s: %s", target_wim, stderr.decode("utf-8", errors="ignore"))
                 return None
 
             # Find the extracted WIM
@@ -105,10 +116,9 @@ async def _find_wim_in_iso(iso_path: str) -> Optional[str]:
                 return str(stable_path)
 
     except FileNotFoundError:
-        # 7z not available
-        pass
-    except Exception:
-        pass
+        logger.warning("7z command not found, cannot extract WIM from ISO: %s", iso_path)
+    except Exception as e:
+        logger.warning("Failed to extract WIM from ISO %s: %s", iso_path, e)
 
     return None
 
@@ -124,17 +134,21 @@ async def _parse_wim_metadata(wim_path: str) -> ISOMetadata:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await result.communicate()
+        stdout, stderr = await result.communicate()
         if result.returncode == 0:
             return _parse_wiminfo_output(stdout.decode("utf-8", errors="ignore"))
+        else:
+            logger.debug("wiminfo failed for %s: %s", wim_path, stderr.decode("utf-8", errors="ignore"))
     except FileNotFoundError:
-        pass
+        logger.debug("wiminfo command not found, falling back to XML parsing")
+    except Exception as e:
+        logger.warning("wiminfo error for %s: %s", wim_path, e)
 
     # Fallback: extract and parse WIM XML metadata
     try:
         return await _parse_wim_xml(wim_path)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("XML parsing failed for %s: %s", wim_path, e)
 
     return metadata
 
@@ -183,13 +197,15 @@ async def _parse_wim_xml(wim_path: str) -> ISOMetadata:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await result.communicate()
+        _, stderr = await result.communicate()
 
         if result.returncode != 0:
+            logger.debug("7z extract XML failed for %s: %s", wim_path, stderr.decode("utf-8", errors="ignore"))
             return metadata
 
         xml_file = Path(tmpdir) / "[1].xml"
         if not xml_file.exists():
+            logger.debug("No [1].xml found in WIM: %s", wim_path)
             return metadata
 
         tree = ET.parse(xml_file)
@@ -273,4 +289,3 @@ def parse_version_string(version: str) -> tuple[str | None, int | None]:
         marketing = None
 
     return marketing, build
-

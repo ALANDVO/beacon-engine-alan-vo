@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Build settings
     build_workspace: str = "./data/builds"
     max_concurrent_builds: int = 2
+    # Logging
+    log_level: str = "INFO"
+
+
 
 
 @lru_cache
