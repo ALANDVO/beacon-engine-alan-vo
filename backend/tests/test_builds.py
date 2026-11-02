@@ -76,8 +76,10 @@ def test_get_build_logs(client: TestClient, iso_and_recipe):
     response = client.get(f"/api/v1/builds/{build_id}/logs")
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 0
-    assert data["logs"] == []
+    assert data["total"] == 1
+    assert len(data["logs"]) == 1
+    assert data["logs"][0]["message"] == "Build job created"
+    assert data["logs"][0]["stage"] == "pending"
 
 
 def test_delete_build(client: TestClient, iso_and_recipe):

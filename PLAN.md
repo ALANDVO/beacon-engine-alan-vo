@@ -30,10 +30,12 @@ Acceptance:
 - Upload Windows ISO, extract version/edition/build info
 - Store ISO metadata in database
 - API endpoint returns parsed ISO details
+- Structured logging for ISO metadata extraction (success/failure)
+- Structured logging for build job creation and lifecycle
 
-Implementation: `backend/app/api/isos.py`, `backend/app/models/__init__.py (ISOImage model)`, `backend/app/schemas/__init__.py (ISOImage schemas)`, `backend/app/core/iso_parser.py`, `frontend/src/pages/ISOsPage.tsx`, `frontend/src/api/client.ts (isosApi)`
+Implementation: `backend/app/api/isos.py`, `backend/app/models/__init__.py (ISOImage model)`, `backend/app/schemas/__init__.py (ISOImage schemas)`, `backend/app/core/iso_parser.py`, `frontend/src/pages/ISOsPage.tsx`, `frontend/src/api/client.ts (isosApi)`, `backend/app/core/iso_parser.py (logging)`, `backend/app/api/isos.py (logging)`, `backend/app/api/builds.py (logging)`, `backend/app/main.py (logging setup)`, `backend/app/core/config.py (log_level setting)`
 
-Tests: `backend/tests/test_isos.py`, `backend/tests/test_iso_parser.py`
+Tests: `backend/tests/test_isos.py`, `backend/tests/test_iso_parser.py`, `backend/tests/test_builds.py (updated for logging)`
 
 ### recipe-builder — Build recipe creation and validation
 
