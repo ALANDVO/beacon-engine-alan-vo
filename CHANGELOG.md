@@ -49,3 +49,7 @@ All notable changes to this project will be documented in this format.
 - No hardcoded credentials
 - .env.example with blank secrets
 - .gitignore excludes .env, databases, build artifacts
+
+---
+
+Alan Vo · [alanvo.net](https://alanvo.net)

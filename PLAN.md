@@ -78,3 +78,6 @@ Implementation: `backend/app/api/users.py`, `backend/app/core/config.py (OIDC se
 
 Tests: `backend/tests/test_users.py`
 
+---
+
+Alan Vo · [alanvo.net](https://alanvo.net)

@@ -189,3 +189,7 @@ MIT License — Copyright © 2026 Alan Vo <alanvo@gmail.com>
 ---
 
 *beacon-engine — Alan Vo | AI & Machine Learning — alanvo@gmail.com*
+
+---
+
+Alan Vo · [alanvo.net](https://alanvo.net)
