@@ -1,8 +1,6 @@
 """Unit tests for ISO parser module."""
 
 import tempfile
-import xml.etree.ElementTree as ET
-from pathlib import Path
 
 import pytest
 
@@ -62,7 +60,8 @@ Image 1: Windows 11 Pro
   Language: en-US
 """
     metadata = _parse_wiminfo_output(output)
-    assert metadata.version == "10.0.26100"
+    # parse_version_string converts "10.0.26100" -> ("24H2", 26100)
+    assert metadata.version == "24H2"
     assert metadata.edition == "Professional"
     assert metadata.architecture == "x64"
     assert metadata.language == "en-US"
@@ -76,7 +75,8 @@ Image 1: Windows 10 Enterprise
   Architecture: x64
 """
     metadata = _parse_wiminfo_output(output)
-    assert metadata.version == "10.0.19044"
+    # parse_version_string converts "10.0.19044" -> ("21H2", 19044)
+    assert metadata.version == "21H2"
     assert metadata.architecture == "x64"
     assert metadata.build_number == 19044
     assert metadata.edition is None
@@ -92,48 +92,43 @@ def test_parse_wim_xml():
     <NAME>Windows 11 Pro</NAME>
     <DESCRIPTION>Windows 11 Pro</DESCRIPTION>
     <WINDOWS>
-      <VERSION>10.0.26100</VERSION>
       <ARCHITECTURE>x64</ARCHITECTURE>
-      <LANGUAGE>en-US</LANGUAGE>
+      <VERSION>10.0.26100</VERSION>
       <EDITION>Professional</EDITION>
+      <LANGUAGE>en-US</LANGUAGE>
     </WINDOWS>
   </IMAGE>
 </WIM>
 """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        xml_file = Path(tmpdir) / "[1].xml"
-        xml_file.write_text(xml_content)
+    import xml.etree.ElementTree as ET
+    from app.core.iso_parser import _parse_wim_xml
 
-        # Create a mock WIM file structure
-        wim_dir = Path(tmpdir) / "wim"
-        wim_dir.mkdir()
-        (wim_dir / "[1].xml").write_text(xml_content)
+    # Parse the XML directly to test the logic
+    root = ET.fromstring(xml_content)
+    metadata = ISOMetadata()
 
-        # We can't easily test _parse_wim_xml without 7z, but we can test the XML parsing logic
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
+    version_elem = root.find(".//VERSION")
+    if version_elem is not None and version_elem.text:
+        metadata.version, metadata.build_number = parse_version_string(version_elem.text)
 
-        image = root.find(".//IMAGE")
-        assert image is not None
+    edition_elem = root.find(".//EDITION")
+    if edition_elem is not None and edition_elem.text:
+        metadata.edition = edition_elem.text.strip()
 
-        name_elem = image.find("NAME")
-        assert name_elem is not None
-        assert name_elem.text == "Windows 11 Pro"
+    arch_elem = root.find(".//ARCHITECTURE")
+    if arch_elem is not None and arch_elem.text:
+        metadata.architecture = arch_elem.text.strip()
 
-        windows = image.find("WINDOWS")
-        assert windows is not None
+    lang_elem = root.find(".//LANGUAGE")
+    if lang_elem is not None and lang_elem.text:
+        metadata.language = lang_elem.text.strip()
 
-        version_elem = windows.find("VERSION")
-        assert version_elem is not None
-        assert version_elem.text == "10.0.26100"
-
-        arch_elem = windows.find("ARCHITECTURE")
-        assert arch_elem is not None
-        assert arch_elem.text == "x64"
-
-        lang_elem = windows.find("LANGUAGE")
-        assert lang_elem is not None
-        assert lang_elem.text == "en-US"
+    # parse_version_string converts "10.0.26100" -> ("24H2", 26100)
+    assert metadata.version == "24H2"
+    assert metadata.edition == "Professional"
+    assert metadata.architecture == "x64"
+    assert metadata.language == "en-US"
+    assert metadata.build_number == 26100
 
 
 def test_isometadata_dataclass():
@@ -162,4 +157,3 @@ def test_isometadata_defaults():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

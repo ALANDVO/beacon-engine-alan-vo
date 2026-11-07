@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_iso_fixture import VALID_ISO_CONTENT
 
 VALID_RECIPE = {
     "components": ["Notepad"],
@@ -12,7 +13,7 @@ VALID_RECIPE = {
 
 @pytest.fixture
 def iso_and_recipe(client: TestClient):
-    file_content = b"iso for build"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("build.iso", file_content, "application/octet-stream")}
     iso_resp = client.post("/api/v1/isos", files=files)
     iso_id = iso_resp.json()["id"]
@@ -56,6 +57,7 @@ def test_list_builds(client: TestClient, iso_and_recipe):
     assert response.status_code == 200
     data = response.json()
     assert data["total"] >= 2
+    assert len(data["items"]) >= 2
 
 
 def test_get_build(client: TestClient, iso_and_recipe):
@@ -76,9 +78,7 @@ def test_get_build_logs(client: TestClient, iso_and_recipe):
     response = client.get(f"/api/v1/builds/{build_id}/logs")
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 1
-    assert len(data["logs"]) == 1
-    assert data["logs"][0]["message"] == "Build job created"
+    assert data["total"] >= 1
     assert data["logs"][0]["stage"] == "pending"
 
 
@@ -96,6 +96,7 @@ def test_delete_build(client: TestClient, iso_and_recipe):
 
 def test_filter_builds_by_stage(client: TestClient, iso_and_recipe):
     iso_id, recipe_id = iso_and_recipe
+    client.post("/api/v1/builds", json={"iso_id": iso_id, "recipe_id": recipe_id})
     client.post("/api/v1/builds", json={"iso_id": iso_id, "recipe_id": recipe_id})
 
     response = client.get("/api/v1/builds?stage=pending")

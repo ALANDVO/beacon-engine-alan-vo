@@ -1,9 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.test_iso_fixture import VALID_ISO_CONTENT
+
 
 def test_upload_iso(client: TestClient):
-    file_content = b"fake iso content for testing"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("test.iso", file_content, "application/octet-stream")}
     response = client.post("/api/v1/isos", files=files)
     assert response.status_code == 201
@@ -14,7 +16,7 @@ def test_upload_iso(client: TestClient):
 
 
 def test_upload_duplicate_iso(client: TestClient):
-    file_content = b"duplicate iso content"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("dup.iso", file_content, "application/octet-stream")}
     r1 = client.post("/api/v1/isos", files=files)
     assert r1.status_code == 201
@@ -26,7 +28,7 @@ def test_upload_duplicate_iso(client: TestClient):
 
 
 def test_list_isos(client: TestClient):
-    file_content = b"iso for listing"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("list.iso", file_content, "application/octet-stream")}
     client.post("/api/v1/isos", files=files)
 
@@ -38,7 +40,7 @@ def test_list_isos(client: TestClient):
 
 
 def test_get_iso(client: TestClient):
-    file_content = b"iso for get"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("get.iso", file_content, "application/octet-stream")}
     create_resp = client.post("/api/v1/isos", files=files)
     iso_id = create_resp.json()["id"]
@@ -49,7 +51,7 @@ def test_get_iso(client: TestClient):
 
 
 def test_delete_iso(client: TestClient):
-    file_content = b"iso for delete"
+    file_content = VALID_ISO_CONTENT
     files = {"file": ("delete.iso", file_content, "application/octet-stream")}
     create_resp = client.post("/api/v1/isos", files=files)
     iso_id = create_resp.json()["id"]
@@ -59,3 +61,12 @@ def test_delete_iso(client: TestClient):
 
     get_resp = client.get(f"/api/v1/isos/{iso_id}")
     assert get_resp.status_code == 404
+
+
+def test_upload_invalid_iso(client: TestClient):
+    """Test that invalid ISO files are rejected."""
+    file_content = b"not a valid iso file"
+    files = {"file": ("invalid.iso", file_content, "application/octet-stream")}
+    response = client.post("/api/v1/isos", files=files)
+    assert response.status_code == 400
+    assert "Invalid ISO file" in response.json()["detail"]

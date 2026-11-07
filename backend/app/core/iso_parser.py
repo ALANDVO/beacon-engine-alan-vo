@@ -30,6 +30,22 @@ class ISOParserError(Exception):
     pass
 
 
+async def validate_iso_file(iso_path: str) -> bool:
+    """
+    Validate that a file is a valid ISO 9660 or UDF image.
+
+    Checks for ISO 9660 Primary Volume Descriptor (CD001) or
+    UDF Beginning Extended Area Descriptor (BEA01) at sector 16 (offset 32768).
+    """
+    try:
+        with open(iso_path, "rb") as f:
+            f.seek(32768)
+            signature = f.read(5)
+            return signature in (b"CD001", b"BEA01")
+    except (OSError, IOError):
+        return False
+
+
 async def extract_iso_metadata(iso_path: str) -> ISOMetadata:
     """
     Extract metadata from a Windows ISO file.
@@ -61,231 +77,214 @@ async def extract_iso_metadata(iso_path: str) -> ISOMetadata:
 
 async def _find_wim_in_iso(iso_path: str) -> Optional[str]:
     """Find and extract a WIM file (boot.wim or install.wim) from the ISO."""
-    # List ISO contents to find WIM files
-    try:
-        result = await asyncio.create_subprocess_exec(
-            "7z", "l", iso_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await result.communicate()
-        if result.returncode != 0:
-            logger.debug("7z list failed for %s: %s", iso_path, stderr.decode("utf-8", errors="ignore"))
-            return None
+    import shutil
 
-        output = stdout.decode("utf-8", errors="ignore")
+    # Check if 7z is available
+    if not shutil.which("7z"):
+        logger.warning("7z not found, cannot extract WIM from ISO")
+        return None
 
-        # Look for boot.wim or install.wim in sources directory
-        wim_files = []
-        for line in output.splitlines():
-            if "boot.wim" in line or "install.wim" in line:
-                # Extract the path from 7z output
-                parts = line.split()
-                if len(parts) >= 6:
-                    wim_path = " ".join(parts[5:])
-                    wim_files.append(wim_path)
-
-        if not wim_files:
-            logger.debug("No WIM files found in ISO: %s", iso_path)
-            return None
-
-        # Prefer install.wim over boot.wim as it has more complete metadata
-        wim_files.sort(key=lambda x: 0 if "install.wim" in x else 1)
-        target_wim = wim_files[0]
-
-        # Extract the WIM file
-        with tempfile.TemporaryDirectory() as tmpdir:
-            extract_dir = Path(tmpdir) / "extracted"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # List ISO contents to find WIM files
+        try:
             result = await asyncio.create_subprocess_exec(
-                "7z", "x", iso_path, f"-o{extract_dir}", target_wim,
+                "7z", "l", iso_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await result.communicate()
-
+            stdout, stderr = await result.communicate()
             if result.returncode != 0:
-                logger.debug("7z extract failed for %s: %s", target_wim, stderr.decode("utf-8", errors="ignore"))
+                logger.warning("Failed to list ISO contents: %s", stderr.decode())
                 return None
 
-            # Find the extracted WIM
-            extracted_wim = extract_dir / target_wim
-            if extracted_wim.exists():
-                # Copy to a stable location for parsing
-                stable_path = Path(tmpdir) / Path(target_wim).name
-                extracted_wim.rename(stable_path)
-                return str(stable_path)
+            output = stdout.decode()
+            wim_files = []
+            for line in output.splitlines():
+                if ".wim" in line.lower() and ("boot.wim" in line.lower() or "install.wim" in line.lower()):
+                    # Extract filename from 7z output (last column)
+                    parts = line.split()
+                    if parts:
+                        wim_files.append(parts[-1])
 
-    except FileNotFoundError:
-        logger.warning("7z command not found, cannot extract WIM from ISO: %s", iso_path)
-    except Exception as e:
-        logger.warning("Failed to extract WIM from ISO %s: %s", iso_path, e)
+            # Prefer install.wim over boot.wim
+            wim_files.sort(key=lambda x: 0 if "install.wim" in x.lower() else 1)
+
+            if not wim_files:
+                logger.warning("No boot.wim or install.wim found in ISO")
+                return None
+
+            # Extract the first WIM file found
+            wim_name = wim_files[0]
+            extract_dir = os.path.join(tmpdir, "wim")
+            os.makedirs(extract_dir, exist_ok=True)
+
+            result = await asyncio.create_subprocess_exec(
+                "7z", "x", iso_path, f"-o{extract_dir}", wim_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode != 0:
+                logger.warning("Failed to extract WIM from ISO: %s", stderr.decode())
+                return None
+
+            extracted_path = os.path.join(extract_dir, wim_name)
+            if os.path.exists(extracted_path):
+                return extracted_path
+
+        except Exception as e:
+            logger.warning("Error extracting WIM from ISO: %s", e)
+            return None
 
     return None
 
 
 async def _parse_wim_metadata(wim_path: str) -> ISOMetadata:
     """Parse metadata from a WIM file using wiminfo or XML fallback."""
-    metadata = ISOMetadata()
+    # Try wiminfo first (part of wimlib)
+    import shutil
 
-    # Try wiminfo first
-    try:
-        result = await asyncio.create_subprocess_exec(
-            "wiminfo", wim_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await result.communicate()
-        if result.returncode == 0:
-            return _parse_wiminfo_output(stdout.decode("utf-8", errors="ignore"))
-        else:
-            logger.debug("wiminfo failed for %s: %s", wim_path, stderr.decode("utf-8", errors="ignore"))
-    except FileNotFoundError:
-        logger.debug("wiminfo command not found, falling back to XML parsing")
-    except Exception as e:
-        logger.warning("wiminfo error for %s: %s", wim_path, e)
+    if shutil.which("wiminfo"):
+        try:
+            result = await asyncio.create_subprocess_exec(
+                "wiminfo", wim_path, "1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode == 0:
+                return _parse_wiminfo_output(stdout.decode())
+        except Exception as e:
+            logger.warning("wiminfo failed, falling back to XML parsing: %s", e)
 
-    # Fallback: extract and parse WIM XML metadata
-    try:
-        return await _parse_wim_xml(wim_path)
-    except Exception as e:
-        logger.warning("XML parsing failed for %s: %s", wim_path, e)
-
-    return metadata
+    # Fallback to XML parsing using 7z
+    return await _parse_wim_xml(wim_path)
 
 
 def _parse_wiminfo_output(output: str) -> ISOMetadata:
     """Parse wiminfo command output."""
     metadata = ISOMetadata()
 
-    # Example wiminfo output:
-    # Image 1: Windows 11 Pro
-    #   Description: Windows 11 Pro
-    #   Size: 1234567890 bytes
-    #   Architecture: x64
-    #   Version: 10.0.26100
-    #   Edition: Professional
-    #   Language: en-US
+    # Parse version (e.g., "10.0.26100")
+    version_match = re.search(r"Version\s*:\s*(\d+\.\d+\.\d+)", output)
+    if version_match:
+        version_str = version_match.group(1)
+        metadata.version, metadata.build_number = parse_version_string(version_str)
 
-    lines = output.splitlines()
-    for line in lines:
-        line = line.strip()
-        if line.startswith("Version:") or line.startswith("  Version:"):
-            metadata.version = line.split(":", 1)[1].strip()
-        elif line.startswith("Edition:") or line.startswith("  Edition:"):
-            metadata.edition = line.split(":", 1)[1].strip()
-        elif line.startswith("Architecture:") or line.startswith("  Architecture:"):
-            metadata.architecture = line.split(":", 1)[1].strip()
-        elif line.startswith("Language:") or line.startswith("  Language:"):
-            metadata.language = line.split(":", 1)[1].strip()
-        # Try to extract build number from version
-        if metadata.version and metadata.build_number is None:
-            match = re.search(r"(\d{5,})", metadata.version)
-            if match:
-                metadata.build_number = int(match.group(1))
+    # Parse edition (e.g., "Windows 11 Pro")
+    edition_match = re.search(r"Edition\s*:\s*(.+)", output)
+    if edition_match:
+        metadata.edition = edition_match.group(1).strip()
+
+    # Parse architecture (e.g., "x64" or "arm64")
+    arch_match = re.search(r"Architecture\s*:\s*(.+)", output)
+    if arch_match:
+        metadata.architecture = arch_match.group(1).strip()
+
+    # Parse language (e.g., "en-US")
+    lang_match = re.search(r"Language\s*:\s*(.+)", output)
+    if lang_match:
+        metadata.language = lang_match.group(1).strip()
 
     return metadata
 
 
 async def _parse_wim_xml(wim_path: str) -> ISOMetadata:
     """Extract and parse WIM XML metadata using 7z."""
-    metadata = ISOMetadata()
+    import shutil
+
+    if not shutil.which("7z"):
+        logger.warning("7z not found, cannot parse WIM XML")
+        return ISOMetadata()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Extract [1].xml from WIM (contains image metadata)
-        result = await asyncio.create_subprocess_exec(
-            "7z", "x", wim_path, f"-o{tmpdir}", "[1].xml",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await result.communicate()
+        try:
+            # Extract [1].xml from WIM (index 1 metadata)
+            result = await asyncio.create_subprocess_exec(
+                "7z", "x", wim_path, f"-o{tmpdir}", "[1].xml",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
+            if result.returncode != 0:
+                logger.warning("Failed to extract WIM XML: %s", stderr.decode())
+                return ISOMetadata()
 
-        if result.returncode != 0:
-            logger.debug("7z extract XML failed for %s: %s", wim_path, stderr.decode("utf-8", errors="ignore"))
+            xml_path = os.path.join(tmpdir, "[1].xml")
+            if not os.path.exists(xml_path):
+                logger.warning("WIM XML not found at expected path")
+                return ISOMetadata()
+
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+
+            metadata = ISOMetadata()
+
+            # Parse version
+            version_elem = root.find(".//VERSION")
+            if version_elem is not None and version_elem.text:
+                metadata.version, metadata.build_number = parse_version_string(version_elem.text)
+
+            # Parse edition
+            edition_elem = root.find(".//EDITION")
+            if edition_elem is not None and edition_elem.text:
+                metadata.edition = edition_elem.text.strip()
+
+            # Parse architecture
+            arch_elem = root.find(".//ARCHITECTURE")
+            if arch_elem is not None and arch_elem.text:
+                metadata.architecture = arch_elem.text.strip()
+
+            # Parse language
+            lang_elem = root.find(".//LANGUAGE")
+            if lang_elem is not None and lang_elem.text:
+                metadata.language = lang_elem.text.strip()
+
             return metadata
 
-        xml_file = Path(tmpdir) / "[1].xml"
-        if not xml_file.exists():
-            logger.debug("No [1].xml found in WIM: %s", wim_path)
-            return metadata
-
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
-
-        # Parse WIM XML structure
-        # Namespace handling
-        ns = {"wim": "http://schemas.microsoft.com/wim/2008/01"}
-
-        # Find IMAGE elements
-        for image in root.findall(".//wim:IMAGE", ns) or root.findall(".//IMAGE"):
-            # Get edition from NAME or DESCRIPTION
-            name_elem = image.find("wim:NAME", ns) or image.find("NAME")
-            if name_elem is not None and name_elem.text:
-                metadata.edition = name_elem.text.strip()
-
-            desc_elem = image.find("wim:DESCRIPTION", ns) or image.find("DESCRIPTION")
-            if desc_elem is not None and desc_elem.text and not metadata.edition:
-                metadata.edition = desc_elem.text.strip()
-
-            # Get version/build from WINDOWS element
-            windows = image.find("wim:WINDOWS", ns) or image.find("WINDOWS")
-            if windows is not None:
-                version_elem = windows.find("wim:VERSION", ns) or windows.find("VERSION")
-                if version_elem is not None and version_elem.text:
-                    metadata.version = version_elem.text.strip()
-                    # Extract build number
-                    match = re.search(r"(\d{5,})", metadata.version)
-                    if match:
-                        metadata.build_number = int(match.group(1))
-
-                arch_elem = windows.find("wim:ARCHITECTURE", ns) or windows.find("ARCHITECTURE")
-                if arch_elem is not None and arch_elem.text:
-                    metadata.architecture = arch_elem.text.strip()
-
-                lang_elem = windows.find("wim:LANGUAGE", ns) or windows.find("LANGUAGE")
-                if lang_elem is not None and lang_elem.text:
-                    metadata.language = lang_elem.text.strip()
-
-            # Only need first image
-            break
-
-    return metadata
+        except Exception as e:
+            logger.warning("Error parsing WIM XML: %s", e)
+            return ISOMetadata()
 
 
 def parse_version_string(version: str) -> tuple[str | None, int | None]:
     """
-    Parse Windows version string into marketing version and build number.
+    Parse Windows version string to marketing version and build number.
 
     Examples:
         "10.0.26100" -> ("24H2", 26100)
+        "10.0.23500" -> ("23H2", 23500)
         "10.0.22621" -> ("22H2", 22621)
         "10.0.19045" -> ("22H2", 19045)
+        "10.0.19044" -> ("21H2", 19044)
     """
-    match = re.search(r"10\.0\.(\d{5})", version)
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
     if not match:
         return None, None
 
-    build = int(match.group(1))
+    major, minor, build = map(int, match.groups())
 
-    # Map build numbers to marketing versions
+    if major != 10:
+        return None, build
+
+    # Windows 11 versions
     if build >= 26100:
-        marketing = "24H2"
-    elif build >= 23500:
-        marketing = "23H2"
-    elif build >= 22621:
-        marketing = "22H2"
-    elif build >= 22000:
-        marketing = "21H2"
-    elif build >= 19045:
-        marketing = "22H2"
-    elif build >= 19044:
-        marketing = "21H2"
-    elif build >= 19043:
-        marketing = "21H1"
-    elif build >= 19042:
-        marketing = "20H2"
-    elif build >= 19041:
-        marketing = "2004"
-    else:
-        marketing = None
+        return "24H2", build
+    if build >= 23500:
+        return "23H2", build
+    if build >= 22621:
+        return "22H2", build
 
-    return marketing, build
+    # Windows 10 versions
+    if build >= 19045:
+        return "22H2", build
+    if build >= 19044:
+        return "21H2", build
+    if build >= 19043:
+        return "21H1", build
+    if build >= 19042:
+        return "20H2", build
+    if build >= 19041:
+        return "2004", build
+
+    return None, build
