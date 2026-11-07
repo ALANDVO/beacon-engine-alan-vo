@@ -12,7 +12,7 @@ import aiofiles
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.db_utils import execute, scalar, scalars, commit, refresh, add, delete
-from app.core.iso_parser import extract_iso_metadata, ISOParserError, ISOMetadata
+from app.core.iso_parser import extract_iso_metadata, ISOParserError, ISOMetadata, validate_iso_file
 from app.models import ISOImage
 from app.schemas import (
     ISOImageResponse,
@@ -60,6 +60,14 @@ async def upload_iso(
 
     file_size = os.path.getsize(file_path)
     sha256 = await compute_sha256_async(file_path)
+
+    # Validate ISO file format
+    if not await validate_iso_file(file_path):
+        os.remove(file_path)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ISO file: not a valid ISO 9660 or UDF image"
+        )
 
     # Extract metadata from ISO
     metadata = ISOMetadata()

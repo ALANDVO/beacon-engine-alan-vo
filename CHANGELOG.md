@@ -1,8 +1,20 @@
 # Changelog
 
+## 1.3.0 — work-in-progress checkpoint
+
+Partial code published for continued development. Known issues: STATUS.md.
+
 ## 1.2.0 — work-in-progress checkpoint
 
 Partial code published for continued development. Known issues: STATUS.md.
+
+### Added
+- ISO file format validation: `validate_iso_file()` function checks for ISO 9660 (CD001) or UDF (BEA01) signatures at sector 16
+- Upload endpoint now rejects non-ISO files with 400 Bad Request before metadata extraction
+- Test fixture for valid ISO content to enable reliable testing
+
+### Fixed
+- ISO parser tests now correctly expect marketing version strings (e.g., "24H2") from `parse_version_string()`
 
 ## 1.1.0 — work-in-progress checkpoint
 
