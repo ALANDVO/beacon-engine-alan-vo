@@ -77,7 +77,7 @@ class ISOImage(Base):
     size_bytes: Mapped[int] = mapped_column(nullable=False)
 
     # Parsed metadata
-    version: Mapped[str | None] = mapped_column(String(50), nullable=True)  # e.g., "26H2"
+    version: Mapped[str | None] = mapped_column(String(50), nullable=True)  # e.g., "24H2"
     edition: Mapped[str | None] = mapped_column(String(50), nullable=True)  # e.g., "Pro", "Enterprise"
     build_number: Mapped[int | None] = mapped_column(nullable=True)  # e.g., 26300
     architecture: Mapped[str | None] = mapped_column(String(20), nullable=True)  # e.g., "x64"
