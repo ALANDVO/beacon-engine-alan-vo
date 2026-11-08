@@ -1,8 +1,16 @@
 # Changelog
 
+## 1.4.0 — work-in-progress checkpoint
+
+Partial code published for continued development. Known issues: STATUS.md.
+
 ## 1.3.0 — work-in-progress checkpoint
 
 Partial code published for continued development. Known issues: STATUS.md.
+
+### Fixed
+- Duplicate query bug in ISO upload endpoint: removed unused `execute()` call before `scalar()` check for existing ISO
+- Corrected model comment: ISO version field example changed from "26H2" to "24H2" to match actual parser output
 
 ## 1.2.0 — work-in-progress checkpoint
 

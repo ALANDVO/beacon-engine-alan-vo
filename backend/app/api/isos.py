@@ -77,11 +77,11 @@ async def upload_iso(
         # Metadata extraction failed, continue with empty metadata
         logger.warning("Failed to extract ISO metadata for %s: %s", file.filename, e)
 
-    existing = await execute(
+    existing_iso = await scalar(
         db,
         select(ISOImage).where(ISOImage.sha256 == sha256, ISOImage.owner_id == user.id),
     )
-    if existing_iso := (await scalar(db, select(ISOImage).where(ISOImage.sha256 == sha256, ISOImage.owner_id == user.id))):
+    if existing_iso:
         os.remove(file_path)
         logger.info("Duplicate ISO detected, returning existing: %s (id=%s)", existing_iso.filename, existing_iso.id)
         return ISOImageResponse.model_validate(existing_iso)
