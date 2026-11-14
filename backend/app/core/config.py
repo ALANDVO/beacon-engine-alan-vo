@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     oidc_client_secret: str = ""
     oidc_redirect_uri: str = ""
     oidc_scopes: list[str] = ["openid", "profile", "email", "roles"]
+    # JWT auth secret for token signing (used for demo token; set to a non-empty value for demo mode)
+    auth_secret: str = ""
 
     # LLM settings (optional)
     llm_api_key: str = ""
