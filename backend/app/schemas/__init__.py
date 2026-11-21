@@ -29,6 +29,7 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
     avatar_url: Optional[str] = None
     roles: Optional[list[UserRole]] = None
 
