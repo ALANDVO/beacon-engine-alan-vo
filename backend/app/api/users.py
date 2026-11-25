@@ -166,3 +166,181 @@ async def logout(response: Response) -> dict:
         detail="Redirecting to Keycloak logout",
         headers={"Location": logout_url},
     )
+
+# OIDC callback endpoint - exchanges authorization code for tokens
+@router.post("/auth/callback")
+async def oidc_callback(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    """OIDC callback endpoint that exchanges the authorization code for tokens.
+
+    Keycloak redirects here with a `code` parameter. We exchange it for
+    an ID token and access token, validate the ID token using JWKS,
+    and create/update the user in the database.
+    """
+    settings = get_settings()
+
+    if settings.demo_mode:
+        token = create_access_token(
+            subject=settings.demo_user_id,
+            name="Demo User",
+            email="demo@local",
+            roles=settings.demo_user_roles,
+        )
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            secure=settings.environment == "production",
+            samesite="lax",
+            max_age=60 * 60 * 24 * 30,
+        )
+        return {"message": "Logged in via demo mode", "mode": "demo"}
+
+    # OIDC mode: exchange authorization code for tokens
+    code = request.query_params.get("code")
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing authorization code",
+        )
+
+    issuer_url = settings.oidc_issuer_url
+    client_id = settings.oidc_client_id
+    client_secret = settings.oidc_client_secret
+    redirect_uri = settings.oidc_redirect_uri or "http://localhost:5173/api/v1/auth/callback"
+
+    # Exchange code for tokens at Keycloak's token endpoint
+    token_url = f"{issuer_url}/protocol/openid-connect/token"
+
+    token_data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+    }
+
+    if client_secret:
+        token_data["client_secret"] = client_secret
+
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(token_url, data=token_data, timeout=30)
+        if token_response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to exchange authorization code: {token_response.text}",
+            )
+
+        token_json = token_response.json()
+        id_token = token_json.get("id_token")
+        access_token = token_json.get("access_token")
+
+    if not id_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No ID token received from Keycloak",
+        )
+
+    # Validate the ID token using JWKS
+    jwks_url = f"{issuer_url}/protocol/openid-connect/certs"
+    async with httpx.AsyncClient() as client:
+        jwks_response = await client.get(jwks_url, timeout=30)
+        if jwks_response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch JWKS from Keycloak",
+            )
+        jwks = jwks_response.json()
+
+    # Validate the ID token
+    from jose import JWTError, jwt
+
+    try:
+        payload = jwt.decode(
+            id_token,
+            jwks,
+            algorithms=["RS256"],
+            audience=client_id,
+            issuer=issuer_url,
+        )
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid ID token: {str(e)}",
+        )
+
+    # Extract user info from the ID token
+    sub: str = payload.get("sub")
+    email: str = payload.get("email", "")
+    name: str = payload.get("name", "Keycloak User")
+    roles_raw = payload.get("realm_access", {}).get("roles", [])
+
+    # Normalise roles to UserRole enum list
+    if isinstance(roles_raw, str):
+        roles = [UserRole(r.strip()) for r in roles_raw.split(",") if r.strip()]
+    elif isinstance(roles_raw, list):
+        roles = [
+            UserRole(r) if isinstance(r, str) else UserRole.VIEWER
+            for r in roles_raw
+            if r in [e.value for e in UserRole]
+        ]
+    else:
+        roles = [UserRole.VIEWER]
+
+    # Look up user in DB or create if missing
+    from datetime import datetime, timezone
+
+    result = db.execute(select(User).where(User.id == sub))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        user = User(
+            id=sub,
+            email=email or f"{sub}@keycloak.local",
+            name=name,
+            roles=roles,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+    else:
+        # Update user info if changed
+        if user.email != email:
+            user.email = email or user.email
+        if user.name != name:
+            user.name = name
+        user.roles = roles
+        user.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(user)
+
+    # Create access token for session
+    token = create_access_token(
+        subject=user.id,
+        name=user.name,
+        email=user.email,
+        roles=user.roles,
+    )
+
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=settings.environment == "production",
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 days
+    )
+
+    return {
+        "message": "OIDC login successful",
+        "mode": "oidc",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "roles": [r.value for r in user.roles],
+        },
+    }
